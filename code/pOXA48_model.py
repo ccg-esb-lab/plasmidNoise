@@ -9,151 +9,136 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from tabulate import tabulate
 import colorcet as cc
-
-
-
-def load_simulation_resultsBKUP(filename):
-    with open(filename, "rb") as f:
-        results = pickle.load(f)
-    return results["istrains"], results["Es"],  results["Btot"], results["BpEs"], results["BpKs"], results["BfEs"], results["BfKs"], results["freqpEs"], results["freqpKs"], results["ts"], results["ys"], results["params"]
-
-def save_simulation_resultsBKUP(filename, istrains, Es, Btot, BpEs, BpKs, BfEs, BfKs, freqpEs, freqpKs, ts, ys, params_list):
-
-    results = {
-        "istrains": istrains,
-        "Es": Es,
-        "Btot": Btot,
-        "BpEs": BpEs,
-        "BpKs": BpKs,
-        "BfEs": BfEs,
-        "BfKs": BfKs,
-        "freqpEs": freqpEs,
-        "freqpKs": freqpKs,
-        "ts":ts,
-        "ys":ys,
-        "params":params_list,
-    }
-    with open(filename, "wb") as f:
-        pickle.dump(results, f)
-
-def get_species_from_istrainsBKUP(model_params, istrains):
-    # Initialize the list to store the types
-    species = []
-
-    # Loop through each element in istrains
-    for istrain in istrains:
-        # Find the corresponding type in model_params and append it to the list
-        this_species = model_params.loc[istrain, 'specie']
-        species.append(this_species)
-
-    # Return the list of types
-    return species
-
 def dB_conj(B_WT, B_TC, conj_exponent):
-    if np.isnan(conj_exponent): # Below detectable limits
-        conj_rate = 0
-    else:
-        conj_rate=10**conj_exponent
-    ret = 0
+    """
+    Conjugation gain term for a WT recipient from plasmid-bearing donors.
+
+    Notes
+    -----
+    `conj_exponent` is interpreted as log10(rate). If NaN, rate is set to 0
+    (used as "below detection limit").
+    """
+    conj_rate = 0.0 if np.isnan(conj_exponent) else 10 ** conj_exponent
+
+    # Accept either a scalar donor density or an iterable of donor densities
     if np.size(B_TC) == 1:
-        ret = conj_rate * B_WT * B_TC  # Changed Bdonor to B_TC because in this case B_TC is a float
-    else:
-        for Bdonor in B_TC:
-            ret += conj_rate * B_WT * Bdonor
-    return ret
+        return conj_rate * B_WT * B_TC
+
+    return conj_rate * B_WT * np.sum(B_TC)
+
 
 def fMultistrain(t, y, params):
-    S = y[0]
-    A = y[1]
-    num_strains = int(len(params['strain']) / 2)
-    B_TC = y[2:num_strains + 2]
-    B_WT = y[num_strains + 2:]
+    """
+    RHS for the multistrain ODE model.
 
-    uStot = 0
+    State vector
+    ------------
+    y = [S, A, B_TC(1..n), B_WT(1..n)]
+      S : resource (or limiting substrate)
+      A : antibiotic concentration
+      B_TC : plasmid-bearing densities (one per strain)
+      B_WT : plasmid-free densities (one per strain)
+    """
+    S, A = y[0], y[1]
+    num_strains = int(len(params["strain"]) / 2)
+
+    B_TC = y[2 : num_strains + 2]
+    B_WT = y[num_strains + 2 :]
+
+    uStot = 0.0
     dB = np.zeros(2 * num_strains)
 
-    # For plasmid-bearing (TC)
+    # Plasmid-bearing (TC) dynamics
     for i in range(num_strains):
-
-        uSi_TC = uS(S, params['VKm'].iloc[i])
+        uSi_TC = uS(S, params["VKm"].iloc[i])
         uStot += uSi_TC * B_TC[i]
 
-        dB_TC_growth = params['rho'].iloc[i] * uSi_TC * B_TC[i]
-        dB_TC_seg = params['rho'].iloc[i] * uSi_TC * B_TC[i] * params['seg_rate'].iloc[i]
+        dB_TC_growth = params["rho"].iloc[i] * uSi_TC * B_TC[i]
+        dB_TC_seg = (
+            params["rho"].iloc[i]
+            * uSi_TC
+            * B_TC[i]
+            * params["seg_rate"].iloc[i]
+        )
 
-        db_MIC_TC = params['kappa'].iloc[i]
-        dB_TC_kill = dB_kill(A, B_TC[i], db_MIC_TC, params.attrs['A_max'])
+        db_MIC_TC = params["kappa"].iloc[i]
+        dB_TC_kill = dB_kill(A, B_TC[i], db_MIC_TC, params.attrs["A_max"])
 
-        conj_permissiveness=params['conj_rate'].iloc[i+num_strains] #permissiveness of WT
-        dB_TC_conj = dB_conj(B_WT[i], B_TC, conj_permissiveness)
-
+        # Conjugation into the TC compartment for this strain's recipient WT
+        conj_perm = params["conj_rate"].iloc[i + num_strains]
+        dB_TC_conj = dB_conj(B_WT[i], B_TC, conj_perm)
 
         dB[i] = dB_TC_growth + dB_TC_conj - dB_TC_seg - dB_TC_kill
 
-    # For plasmid-free (WT)
-    for i in range(num_strains, 2*num_strains):
+    # Plasmid-free (WT) dynamics
+    for i in range(num_strains, 2 * num_strains):
+        j = i - num_strains  # strain index (0..n-1)
 
-        uSi_WT = uS(S, params['VKm'].iloc[i])
-        uStot += uSi_WT * B_WT[i-num_strains]
+        uSi_WT = uS(S, params["VKm"].iloc[i])
+        uStot += uSi_WT * B_WT[j]
 
-        dB_WT_growth = params['rho'].iloc[i] * uSi_WT * B_WT[i-num_strains]
+        dB_WT_growth = params["rho"].iloc[i] * uSi_WT * B_WT[j]
 
-        db_MIC_WT = params['kappa'].iloc[i]
-        dB_WT_kill = dB_kill(A, B_WT[i-num_strains], db_MIC_WT, params.attrs['A_max'])
+        db_MIC_WT = params["kappa"].iloc[i]
+        dB_WT_kill = dB_kill(A, B_WT[j], db_MIC_WT, params.attrs["A_max"])
 
-        uSi_TC = uS(S, params['VKm'].iloc[i-num_strains])
-        dB_WT_seg= params['rho'].iloc[i - num_strains] * uSi_TC * B_TC[i - num_strains] * params['seg_rate'].iloc[i-num_strains]
+        # WT gain from TC segregation (loss of plasmid)
+        uSi_TC = uS(S, params["VKm"].iloc[j])
+        dB_WT_seg = (
+            params["rho"].iloc[j]
+            * uSi_TC
+            * B_TC[j]
+            * params["seg_rate"].iloc[j]
+        )
 
-        conj_permissiveness=params['conj_rate'].iloc[i] #permissiveness of WT
-        dB_WT_conj = dB_conj(B_WT[i-num_strains], B_TC, conj_permissiveness)
+        # WT loss via conjugation (conversion to TC)
+        conj_perm = params["conj_rate"].iloc[i]
+        dB_WT_conj = dB_conj(B_WT[j], B_TC, conj_perm)
 
         dB[i] = dB_WT_growth - dB_WT_conj - dB_WT_kill + dB_WT_seg
 
-    dS =  - uStot
-    dA = -A * (params.attrs['alphas'][0] * np.sum(B_TC) + params.attrs['alphas'][1] * np.sum(B_WT))
+    dS = -uStot
+    dA = -A * (
+        params.attrs["alphas"][0] * np.sum(B_TC)
+        + params.attrs["alphas"][1] * np.sum(B_WT)
+    )
 
     return np.concatenate(([dS], [dA], dB))
 
-def load_environmentBKUP(str_E, indx_E, envPath, num_days):
-    this_csv = f'{str_E}_{indx_E}.csv'
-    path_csv = os.path.join(envPath, str_E)
-
-    #print(f'Loading {this_csv}')
-    T = pd.read_csv(os.path.join(path_csv, this_csv))
-    E_sample = T.iloc[:, 0].values
-    E = (E_sample - E_sample.min()) / (E_sample.max() - E_sample.min())
-    E = E[:num_days]
-
-    return E
-
-# Load environments
-def load_environmentsBKUP(str_E, envPath, num_days, iEs):
-
-  Es = []
-  for indx_E in iEs:
-      E = load_environment(str_E, indx_E, envPath, num_days)
-      Es.append(E)
-  return Es
-
 
 def simulate_multistrain(this_params, istrains, y0):
-    strains_params=get_selected_strains_params(this_params, istrains)
+    """
+    Integrate the multistrain ODE system for a selected strain set.
 
-    num_strains = int((len(y0)-2) / 2)
-    # Set initial conditions
-    S0 = this_params.attrs['S0']
-    B0 = this_params.attrs['B0']
+    Parameters
+    ----------
+    this_params : pandas.DataFrame-like
+        Full parameter table (with attrs carrying global settings).
+    istrains : list-like
+        Indices (or identifiers) selecting the strains to simulate.
+    y0 : array-like
+        Initial state vector [S, A, B_TC..., B_WT...].
 
-    t_span = [0, this_params.attrs['T']]
+    Returns
+    -------
+    times : ndarray
+        Integration time points.
+    ys : ndarray
+        State trajectories with shape (n_states, n_times).
+    strains_params : object
+        Parameter table restricted to the selected strains.
+    """
+    strains_params = get_selected_strains_params(this_params, istrains)
 
-    # Solve the ODE
-    sol = solve_ivp(fMultistrain, t_span, y0, args=(strains_params,), method='Radau')
+    t_span = [0, this_params.attrs["T"]]
 
-    # Extract the time points and solution vectors
-    times = sol.t
-    ys = sol.y
+    # Stiff solver for potentially sharp antibiotic killing terms
+    sol = solve_ivp(
+        fMultistrain, t_span, y0, args=(strains_params,), method="Radau"
+    )
 
-    return times, ys, strains_params
+    return sol.t, sol.y, strains_params
+
 
 
 
@@ -225,274 +210,6 @@ def simulateTransfers_multistrain(model_params, istrains, E, type_experiment='in
     return times_list, ys_list, strains_params_list
 
 
-def get_final_pointsBKUP(times_list, ys_list):
-    final_times = []
-    final_ys = []
-
-    for day in range(len(times_list)):
-        t = times_list[day]
-        ys = ys_list[day]
-        final_time = t[-1]  # Get the last time point
-        final_y = ys[:, -1]  # Get the last solution vector
-        final_times.append(final_time)
-        final_ys.append(final_y)
-
-    return final_times, final_ys
-
-
-def get_selected_strains_paramsBKUP(model_params, istrains):
-    num_strains = int(len(model_params) / 2)
-
-    indices_tc = model_params.loc[(model_params.index.isin(istrains)) & (model_params['type'] == 'TC')].index
-    indices_wt = indices_tc + num_strains
-
-    output = pd.DataFrame()
-
-    for key in model_params.columns:
-        if key == 'type':
-            output[key] = ['TC'] * len(indices_tc) + ['WT'] * len(indices_wt)
-        else:
-            output[key] = model_params.loc[indices_tc, key].tolist() + model_params.loc[indices_wt, key].tolist()
-
-    output.attrs = model_params.attrs
-    return output
-
-
-def get_species_from_istrainsBKUP(model_params, istrains):
-    # Initialize the list to store the types
-    species = []
-
-    # Loop through each element in istrains
-    for istrain in istrains:
-        # Find the corresponding type in model_params and append it to the list
-        this_species = model_params.loc[istrain, 'specie']
-        species.append(this_species)
-
-    # Return the list of types
-    return species
-
-
-def analyze_simulationBKUP(model_params, this_istrains, final_ys):
-
-    B = np.array(final_ys)
-    B=B[:,2:]
-    num_days = B.shape[0]
-    num_strains = B.shape[1] // 2
-
-
-    species=get_species_from_istrains(model_params, this_istrains)
-
-    # Iterate over strains and add their populations to the relevant counters
-    Btot=np.zeros(num_days)
-    BpE=np.zeros(num_days)
-    BpK=np.zeros(num_days)
-    BfE=np.zeros(num_days)
-    BfK=np.zeros(num_days)
-    freqpE=np.zeros(num_days)
-    freqpK=np.zeros(num_days)
-    for day in range(num_days):
-
-      #print("B[",day,"]=",B[day,:])
-
-      for i in range(num_strains):
-        if species[i] == 'E':
-            BpE[day] += B[day, i]
-            BfE[day] += B[day, i + num_strains]
-        elif species[i] == 'K':
-            BpK[day] += B[day, i]
-            BfK[day] += B[day, i + num_strains]
-
-        Btot[day]+=B[day, i + num_strains]+B[day, i]
-
-      # Compute frequencies for E and K strains separately
-      if Btot[day] > 0:
-          freqpE[day] = BpE[day] / Btot[day]
-          freqpK[day] = BpK[day] / Btot[day]
-      else:
-          freqpE[day] = np.nan
-          freqpK[day] = np.nan
-
-    return Btot, BpE, BpK, BfE, BfK, freqpE, freqpK
-
-def load_environmentBKUP(str_E, indx_E, envPath, num_days):
-    this_csv = f'{str_E}_{indx_E}.csv'
-    path_csv = os.path.join(envPath, str_E)
-
-    #print(f'Loading {this_csv}')
-    T = pd.read_csv(os.path.join(path_csv, this_csv))
-    E_sample = T.iloc[:, 0].values
-    E = (E_sample - E_sample.min()) / (E_sample.max() - E_sample.min())
-    E = E[:num_days]
-
-    return E
-
-# Load environments
-def load_environmentsBKUP(str_E, envPath, num_days, iEs):
-
-  Es = []
-  for indx_E in iEs:
-      E = load_environment(str_E, indx_E, envPath, num_days)
-      Es.append(E)
-  return Es
-
-
-
-def simulate_environment_multistrainBKUP(model_params, istrains, E, type_experiment):
-    """
-    Simulates multiple multi-strain environments and analyzes the results.
-
-    Parameters:
-    model_params: xr.Dataset
-        Dataset containing parameters for the model.
-    istrains: list
-        List of strains included in the simulation.
-    Es: list
-        List of lists, each containing daily antibiotic concentrations.
-    type_experiment: str
-        Type of experiment to simulate: 'competition' or 'invasion'.
-
-    Returns:
-    Btots, BpEs, BpKs, BfEs, BfKs, freqpEs, freqpKs, ts, ys, params: lists
-        Lists containing the total biomass, biomass densities, plasmid frequencies, time points,
-        biomass densities at each time point, and parameters for each strain for each day for each simulation.
-    """
-    print('.', end="", flush=True)
-
-    # Simulate transfers
-    times_list, ys_list, strains_params_list = simulateTransfers_multistrain(model_params, istrains, E, type_experiment)
-
-    # Get final points
-    final_times, final_ys = get_final_points(times_list, ys_list)
-
-    # Analyze simulation results
-    Btot, BpE, BpK, BfE, BfK, freqpE, freqpK  = analyze_simulation(model_params, istrains, final_ys)
-
-    return Btot, BpE, BpK, BfE, BfK, freqpE, freqpK, times_list, ys_list, strains_params_list
-
-
-
-def simulate_environments_multistrainBKUP(model_params, istrains, Es, type_experiment):
-    """
-    Simulates multiple multi-strain environments and analyzes the results.
-
-    Parameters:
-    model_params: xr.Dataset
-        Dataset containing parameters for the model.
-    istrains: list
-        List of strains included in the simulations.
-    Es: list of lists
-        Each sublist contains daily antibiotic concentrations.
-    type_experiment: str
-        Type of experiment to simulate: 'competition' or 'invasion'.
-
-    Returns:
-    Btots: list of arrays
-        Each array contains the total biomass for each day.
-    BpEs: list of arrays
-        Each array contains the biomass densities of E. coli strains carrying the plasmid for each day.
-    BpKs: list of arrays
-        Each array contains the biomass densities of Klebsiella strains carrying the plasmid for each day.
-    BfEs: list of arrays
-        Each array contains the biomass densities of E. coli strains free of the plasmid for each day.
-    BfKs: list of arrays
-        Each array contains the biomass densities of Klebsiella strains free of the plasmid for each day.
-    freqpEs: list of arrays
-        Each array contains the frequencies of E. coli strains carrying the plasmid for each day.
-    freqpKs: list of arrays
-        Each array contains the frequencies of Klebsiella strains carrying the plasmid for each day.
-    ts: list of lists
-        Each sublist contains the time points.
-    ys: list of lists
-        Each sublist contains the biomass densities at each time point.
-    params: list of lists
-        Each sublist contains the parameters for each strain.
-    """
-    freqpEs = []
-    freqpKs = []
-    BpEs=[]
-    BpKs=[]
-    BfEs=[]
-    BfKs=[]
-    Btots=[]
-    ts=[]
-    ys=[]
-    params=[]
-    for E in Es:
-        #print("E=%s"%E)
-        Btot, BpE, BpK, BfE, BfK, freqpE, freqpK, times_list, ys_list, params_list = simulate_environment_multistrain(model_params, istrains, E, type_experiment)
-        freqpEs.append(freqpE)
-        freqpKs.append(freqpK)
-        BfEs.append(BfE)
-        BfKs.append(BfK)
-        BpEs.append(BpE)
-        BpKs.append(BpK)
-        Btots.append(Btot)
-        ts.append(times_list)
-        ys.append(ys_list)
-        params.append(params_list)
-
-    return Btots, BpEs, BpKs, BfEs, BfKs, freqpEs, freqpKs, ts, ys, params
-
-
-def plot_environmentBKUP(E, Emax=1, str_E=''):
-    cmap = plt.get_cmap('gray_r')  # Choose the colormap (gray)
-    num_days = len(E)
-    norm = mcolors.Normalize(vmin=0, vmax=Emax)  # Normalize colors to range [0, 1]
-
-    plt.figure(figsize=(10, 1))
-    plt.imshow([E], cmap=cmap, norm=norm, aspect='auto', extent=[0, len(E)+1, 0, 1])
-    plt.xticks(np.arange(0, num_days + 1)+0.5, np.arange(0, num_days + 1))  # Shift x-ticks by 0.5
-    plt.xlabel('Time (days)')
-    plt.xlim([0, num_days+1])
-    plt.ylabel('')
-    plt.title(str_E)
-    plt.show()
-
-
-
-def plotTransfersBKUP(t_list, ys_list, strains_params_list, save_path=''):
-    num_strains = int(len(strains_params_list[0]['strain']) / 2)
-    num_days = len(t_list)
-
-    plt.figure(figsize=(8, 3))
-    for day in range(len(t_list)):
-        t = t_list[day] + day * model_params.attrs['T']  # Add 'day' to each time point
-        ys = ys_list[day]
-        strains_params = strains_params_list[day]
-
-        S = ys[0]
-        B_TC = ys[2:num_strains + 2]
-        B_WT = ys[num_strains + 2:]
-
-        for i in range(len(B_WT)):
-            if day == 0:  # Display legend only for the first iteration
-                plt.plot(t, B_WT[i], ':', color=cmap_strains[istrains[i]]) #, label=f'{codes[i]}'
-            else:
-                plt.plot(t, B_WT[i], ':', color=cmap_strains[istrains[i]])
-
-        for i in range(len(B_TC)):
-            if day == 0:  # Display legend only for the first iteration
-                plt.plot(t, B_TC[i], '-', color=cmap_strains[istrains[i]]) #, label=f'{codes[i]} (TC)'
-            else:
-                plt.plot(t, B_TC[i], '-', color=cmap_strains[istrains[i]])
-
-
-        if np.any(np.array(B_WT) > 0.0) or np.any(np.array(B_TC) > 0.0):
-          plt.yscale('log', base=10)
-
-    plt.xlim([0, num_days*model_params.attrs['T']])
-    plt.xlabel('Time (hours)')
-    plt.ylabel('Density (cells/ml)')
-    #plt.ylim([1e-2, 1.1e9])
-    #plt.legend()
-    
-
-    if save_path:
-      plt.savefig(save_path)
-
-    plt.show()
-
-
 def plotTransfers(model_params, istrains, t_list, ys_list, strains_params_list,  save_path=''):
     """
     Plots the simulation results, displaying the biomass densities over time.
@@ -559,79 +276,93 @@ def plotTransfers(model_params, istrains, t_list, ys_list, strains_params_list, 
 
     plt.show()
 
+def plotTransfersFinalPoint(model_params, istrains, t_list, ys_list, strains_params_list, save_path=""):
+    """
+    Plot end-of-day densities across serial transfers for each strain.
 
-def plotTransfersFinalPoint(model_params, istrains,t_list, ys_list, strains_params_list, save_path=''):
-    num_strains = int(len(strains_params_list[0]['strain']) / 2)
+    Notes
+    -----
+    For each day, the plot uses the first point (day 0) and the last point
+    (final state) of both plasmid-free (WT) and plasmid-bearing (TC) subpopulations.
+    """
+    num_strains = int(len(strains_params_list[0]["strain"]) / 2)
     num_days = len(t_list)
 
     plt.figure(figsize=(8, 3))
-    t = np.arange(num_days+1)
+    days = np.arange(num_days + 1)
 
     for i in range(num_strains):
         B_WT_day = []
         B_TC_day = []
+
         for day in range(num_days):
             ys = ys_list[day]
-            strains_params = strains_params_list[day]
 
-            B_TC = ys[2:num_strains + 2]
-            B_WT = ys[num_strains + 2:]
+            B_TC = ys[2 : num_strains + 2]
+            B_WT = ys[num_strains + 2 :]
 
-            if day==0: #Initial conditions
-              B_WT_day.append(B_WT[i, 0])
-              B_TC_day.append(B_TC[i, 0])
+            if day == 0:
+                B_WT_day.append(B_WT[i, 0])
+                B_TC_day.append(B_TC[i, 0])
 
             B_WT_day.append(B_WT[i, -1])
             B_TC_day.append(B_TC[i, -1])
 
-            #print(B_TC)
-
-        # Check if the maximum density for the strain is greater than 1e6
-        if max(B_WT_day) > 1.0 or max(B_TC_day) > 1.0:
-            plt.plot(t+1, B_WT_day, ':') #, color=cmap_strains[istrains[i]]
-            plt.plot(t+1, B_TC_day, '-') #, color=cmap_strains[istrains[i]], label=f'{strain_names[istrains[i]]}'
-        else:
-            plt.plot(t+1, B_WT_day, ':') #, color=cmap_strains[istrains[i]]
-            plt.plot(t+1, B_TC_day, '-') #, color=cmap_strains[istrains[i]]
-
-
+        # Plot WT (dotted) and TC (solid) trajectories for this strain
+        plt.plot(days + 1, B_WT_day, ":")
+        plt.plot(days + 1, B_TC_day, "-")
 
     plt.xlim([1, num_days])
-    plt.xlabel('Time (days)')
-    plt.ylabel('Final density (cells/ml)')
-    #plt.ylim([1e0, 1.1e9])
-    
-    if np.any(np.array(B_WT_day) > 0.0) or np.any(np.array(B_TC_day) > 0.0):
-        plt.yscale('log', base=10)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Final density (cells/ml)")
 
-    ax = plt.gca()  # Get current Axes instance
+    # Use log scale only if there is any positive density
+    if (np.array(B_WT_day) > 0.0).any() or (np.array(B_TC_day) > 0.0).any():
+        plt.yscale("log", base=10)
+
+    ax = plt.gca()
     handles, labels = ax.get_legend_handles_labels()
     if labels:
-        ax.legend(handles, labels, loc='upper center', bbox_to_anchor=(0.5, -0.2), ncol=4)
-
+        ax.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=4)
 
     if save_path:
-      plt.savefig(save_path)
+        plt.savefig(save_path)
+
     plt.show()
 
 
 def import_model_params(filename, expe_params):
-    # Initialize an empty dictionary
+    """
+    Load strain-level model parameters from a CSV file into a DataFrame.
+
+    Notes
+    -----
+    - Missing numeric fields are stored as NaN.
+    - `expe_params` is attached to the returned DataFrame via `df.attrs`.
+    - `seg_rate` is currently set as a fixed constant for all rows.
+    """
     model_params = {
-         "strain_name": [], "strain_color": [], "specie": [], "strain": [], "type": [],
-       "PCN": [], "MIC": [], "conj_rate": [],   "VKm": [], "rho": [], "seg_rate":[], "kappa": []}
+        "strain_name": [],
+        "strain_color": [],
+        "specie": [],
+        "strain": [],
+        "type": [],
+        "PCN": [],
+        "MIC": [],
+        "conj_rate": [],
+        "VKm": [],
+        "rho": [],
+        "seg_rate": [],
+        "kappa": [],
+    }
 
-    # Open the CSV file
-    with open(filename, 'r') as csvfile:
-        # Use the csv reader
+    seg_rate = 0.002
+
+    with open(filename, "r") as csvfile:
         csvreader = csv.reader(csvfile)
+        _headers = next(csvreader)
 
-        # Ignore the header
-        headers = next(csvreader)
-
-        seg_rate=0.002
-
-        # Read each row: name	color	specie	strain	type	PCN	MIC	conj_rate	VKm	rho	seg_rate	Kappa
+        # Expected columns: idx, name, color, specie, strain, type, PCN, MIC, conj_rate, VKm, rho, seg_rate, kappa
         for row in csvreader:
             model_params["strain_name"].append(row[1])
             model_params["strain_color"].append(row[2])
@@ -646,87 +377,64 @@ def import_model_params(filename, expe_params):
             model_params["seg_rate"].append(seg_rate)
             model_params["kappa"].append(float(row[12]) if row[12] else np.nan)
 
-    # Convert the dictionary to a DataFrame
     df = pd.DataFrame(model_params)
-
-    # Assign the experimental parameters as metadata
     df.attrs = expe_params
-
-    # Return the completed DataFrame
     return df
 
 
 def export_model_params(model_params, filename):
-    num_strains = int(len(model_params['specie']) / 2)
+    """
+    Export model parameters to CSV using the expected column order.
 
-    # Prepare the header
-    headers = ["", "name", "color", "specie", "strain", "type",
-                "PCN", "MIC", "conj_rate", "VKm", "rho","seg_rate", "kappa"]
+    Notes
+    -----
+    Assumes rows are ordered as [TC strains..., WT strains...] (or equivalent)
+    and that total rows equal 2 * num_strains.
+    """
+    num_strains = int(len(model_params["specie"]) / 2)
 
-    # Prepare the rows
+    headers = [
+        "",
+        "name",
+        "color",
+        "specie",
+        "strain",
+        "type",
+        "PCN",
+        "MIC",
+        "conj_rate",
+        "VKm",
+        "rho",
+        "seg_rate",
+        "kappa",
+    ]
+
     rows = []
     for i in range(2 * num_strains):
-        name = model_params['strain_name'][i]
-        color = model_params['strain_color'][i]
-        specie = model_params['specie'][i]
-        strain = model_params['strain'][i]
-        ptype = model_params['type'][i]
-        pcn = model_params['PCN'][i]
-        mic = model_params['MIC'][i]
-        conj = model_params['conj_rate'][i]
-        VKm = model_params['VKm'][i]
-        rho = model_params['rho'][i]
-        seg = model_params['seg_rate'][i]
-        kappa = model_params['kappa'][i]
-        row = [f"{i+1}", name, color, specie, strain, ptype, pcn, mic, conj, VKm, rho, seg, kappa]
+        row = [
+            f"{i+1}",
+            model_params["strain_name"][i],
+            model_params["strain_color"][i],
+            model_params["specie"][i],
+            model_params["strain"][i],
+            model_params["type"][i],
+            model_params["PCN"][i],
+            model_params["MIC"][i],
+            model_params["conj_rate"][i],
+            model_params["VKm"][i],
+            model_params["rho"][i],
+            model_params["seg_rate"][i],
+            model_params["kappa"][i],
+        ]
         rows.append(row)
 
-    # Write to the CSV file
-    with open(filename, 'w', newline='') as csvfile:
+    with open(filename, "w", newline="") as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(headers)
         csvwriter.writerows(rows)
-    print("Data exported to %s"%filename)
 
-def print_expe_params(expe_params):
-    print("Experimental Parameters:")
-    print("------------------------------------------------")
-    print(f"\tInitial bacterial density (B0): {expe_params['B0']}")
-    print(f"\tMaximum drug concentration (A_max): {expe_params['A_max']}")
-    print(f"\tAntibiotic degradation rates (alphas): {expe_params['alphas']}")
-    print(f"\tLength of experiment (T): {expe_params['T']}")
-    print(f"\tInitial resource concentration (S0): {expe_params['S0']}")
-    print(f"\tResource decay rate (d): {expe_params['d']}")
-    print(f"\tExtinction threshold: {expe_params['extinction_threshold']}")
-    print("------------------------------------------------")
+    print(f"Data exported to {filename}")
 
-
-def calculate_MIC(results, Amax_values):
-
-    extinction_threshold = model_params.attrs['extinction_threshold']
-
-    prev_final_total_density = None
-    prev_Amax = None
-
-    # Loop over the results for each antibiotic concentration
-    for Amax, res in zip(Amax_values, results):
-        # Extract the final total bacterial density
-        final_total_density = res[-1].sum()
-
-        # If the final total bacterial density is below the threshold, interpolate MIC
-        if final_total_density < extinction_threshold:
-            if prev_final_total_density is not None:
-                # Linear interpolation formula in log space:
-                # MIC = prev_Amax + (Amax - prev_Amax) * ((np.log(extinction_threshold) - np.log(prev_final_total_density)) / (np.log(final_total_density) - np.log(prev_final_total_density)))
-                return prev_Amax + (Amax - prev_Amax) * ((np.log(extinction_threshold) - np.log(prev_final_total_density)) / (np.log(final_total_density) - np.log(prev_final_total_density)))
-            else:
-                return Amax
-
-        prev_final_total_density = final_total_density
-        prev_Amax = Amax
-
-    # If no MIC was found (i.e., the bacteria survived all tested concentrations), return None
-    return None
 
 def display_strain_params(model_params, istrain):
     
@@ -750,39 +458,96 @@ def display_strain_params(model_params, istrain):
     print(f"\nWT Strain {istrain+tot_strains+1}:")
     display_params(model_params, istrain+tot_strains)
 
+
+def print_expe_params(expe_params):
+    """
+    Pretty-print experiment-level parameters stored in a dict-like object.
+    """
+    print("Experimental Parameters")
+    print("-" * 48)
+    print(f"\tInitial bacterial density (B0): {expe_params['B0']}")
+    print(f"\tMaximum drug concentration (A_max): {expe_params['A_max']}")
+    print(f"\tAntibiotic degradation rates (alphas): {expe_params['alphas']}")
+    print(f"\tLength of experiment (T): {expe_params['T']}")
+    print(f"\tInitial resource concentration (S0): {expe_params['S0']}")
+    print(f"\tResource decay rate (d): {expe_params['d']}")
+    print(f"\tExtinction threshold: {expe_params['extinction_threshold']}")
+    print("-" * 48)
+
+
+def calculate_MIC(results, Amax_values):
+    """
+    Estimate MIC from a dose-response sweep using an extinction threshold.
+
+    Parameters
+    ----------
+    results : list
+        Per-dose simulation outputs; each entry must support `res[-1].sum()`
+        as the final total density.
+    Amax_values : array-like
+        Antibiotic concentrations tested, in the same order as `results`.
+
+    Returns
+    -------
+    float or None
+        MIC estimate (interpolated in log-density space) or None if extinction
+        is never reached.
+
+    Notes
+    -----
+    Uses `model_params.attrs['extinction_threshold']` as the cutoff.
+    """
+    extinction_threshold = model_params.attrs["extinction_threshold"]
+
+    prev_final_total_density = None
+    prev_Amax = None
+
+    for Amax, res in zip(Amax_values, results):
+        final_total_density = res[-1].sum()
+
+        if final_total_density < extinction_threshold:
+            if prev_final_total_density is None:
+                return Amax
+
+            # Interpolate between the last surviving dose and the first extinct dose
+            num = np.log(extinction_threshold) - np.log(prev_final_total_density)
+            den = np.log(final_total_density) - np.log(prev_final_total_density)
+            return prev_Amax + (Amax - prev_Amax) * (num / den)
+
+        prev_final_total_density = final_total_density
+        prev_Amax = Amax
+
+    return None
+
+
 def display_params(model_params, idx):
+    """
+    Print parameters for a single row (strain) in the model parameter table.
 
-    # Get the parameters for the specific strain
-    name = model_params['strain_name'][idx]
-    #color = model_params['strain_color'][idx]
-    if idx<tot_strains:
-      color=cmap_strains[idx]
-    else:
-      color=cmap_strains[idx-tot_strains]
-    specie = model_params['specie'][idx]
-    strain = model_params['strain'][idx]
-    ptype = model_params['type'][idx]
-    pcn = model_params['PCN'][idx]
-    mic = model_params['MIC'][idx]
-    conj = model_params['conj_rate'][idx]
-    VKm = model_params['VKm'][idx]
-    rho = model_params['rho'][idx]
-    seg = model_params['seg_rate'][idx]
-    kappa = model_params['kappa'][idx]
+    Notes
+    -----
+    Color is taken from `cmap_strains` and wrapped using `tot_strains`.
+    This function expects `tot_strains` and `cmap_strains` to exist globally.
+    """
+    name = model_params["strain_name"][idx]
 
-    # Print the parameters
+    # Map idx to the base strain color (TC/WT share the same color)
+    color_idx = idx if idx < tot_strains else idx - tot_strains
+    color = cmap_strains[color_idx]
+
     print(f"\tName: {name}")
     print(f"\tColor: {color}")
-    print(f"\tSpecie: {specie}")
-    print(f"\tStrain: {strain}")
-    print(f"\tType: {ptype}")
-    print(f"\tPCN: {pcn}")
-    print(f"\tMIC: {mic}")
-    print(f"\tConjugation Rate: {conj}")
-    print(f"\tVKm: {VKm}")
-    print(f"\tRho: {rho}")
-    print(f"\tSegregation Rate: {seg}")
-    print(f"\tKappa: {kappa}")
+    print(f"\tSpecie: {model_params['specie'][idx]}")
+    print(f"\tStrain: {model_params['strain'][idx]}")
+    print(f"\tType: {model_params['type'][idx]}")
+    print(f"\tPCN: {model_params['PCN'][idx]}")
+    print(f"\tMIC: {model_params['MIC'][idx]}")
+    print(f"\tConjugation Rate: {model_params['conj_rate'][idx]}")
+    print(f"\tVKm: {model_params['VKm'][idx]}")
+    print(f"\tRho: {model_params['rho'][idx]}")
+    print(f"\tSegregation Rate: {model_params['seg_rate'][idx]}")
+    print(f"\tKappa: {model_params['kappa'][idx]}")
+
 
 def display_model_params(model_params, istrains=[]):
     """
@@ -832,190 +597,225 @@ def display_model_params(model_params, istrains=[]):
 
     headers = ["", "name", "strain", "specie",  "type", "PCN", "MIC", "conj_rate", "VKm", "rho", "seg_rate",  "kappa"]
     print(tabulate(table, headers, tablefmt="fancy_grid"))
-
 def display_model_params_stats(model_params, istrains):
-    table = []
-    
-    headers = ["strain_name", "strain", "specie", "type", "PCN", "MIC", "conj_rate", "VKm", "rho", "seg_rate", "kappa"]
-    
-    tot_strains=int(len(model_params['specie'])/2)
+    """
+    Print summary statistics of selected model parameters by (specie, type).
+
+    Notes
+    -----
+    - If `istrains` is empty/None, uses all base strains (0..tot_strains-1).
+    - Reports mean, min/max (as range), and N for each parameter.
+    - Assumes the parameter table is ordered as [TC block, WT block].
+    """
+    headers = [
+        "strain_name", "strain", "specie", "type",
+        "PCN", "MIC", "conj_rate", "VKm", "rho", "seg_rate", "kappa",
+    ]
+
+    tot_strains = int(len(model_params["specie"]) / 2)
     if not istrains:
         istrains = list(range(tot_strains))
 
-    for i in istrains: # Combine Plasmid-Free (TC) and Plasmid-bearing (WT)
-        row = {}
-        for key in headers:
-            row[key] = model_params[key][i]
-        table.append(row)
-  
-    for i in istrains: # Combine Plasmid-Free (TC) and Plasmid-bearing (WT)
-        row = {}
-        for key in headers:
-            row[key] = model_params[key][i+tot_strains]
-        table.append(row)
-    
+    # Build a table for both TC and WT rows corresponding to the selected strains
+    table = []
+    for i in istrains:
+        table.append({k: model_params[k][i] for k in headers})
+    for i in istrains:
+        table.append({k: model_params[k][i + tot_strains] for k in headers})
+
     df = pd.DataFrame(table)
-    
-    # Select only relevant columns for statistics
+
     stats_columns = ["conj_rate", "VKm", "rho", "seg_rate", "kappa"]
     df = df[["specie", "type"] + stats_columns]
 
-    # Separate by E and K, and by TC and WT
-    groups = df.groupby(["specie", "type"])
-
     stats_table = []
-    for name, group in groups:
-        stats = group[stats_columns].describe()
-        # Extract mean and range for each column
-        min_values = stats.loc['min']
-        max_values = stats.loc['max']
-        range_values = max_values - min_values
-        mean_values = stats.loc['mean']
+    for (specie, ptype), group in df.groupby(["specie", "type"]):
+        desc = group[stats_columns].describe()
 
-        # Add to table
-        for column in stats_columns:
-            stats_row = [f"{name[0]}-{name[1]}", column, mean_values[column], (min_values[column], max_values[column]), len(group)]
-            stats_table.append(stats_row)
-        
-        # Add spacer for readability
-        stats_table.append(['']*len(stats_table[0]))
+        min_vals = desc.loc["min"]
+        max_vals = desc.loc["max"]
+        mean_vals = desc.loc["mean"]
+        n = len(group)
+
+        for col in stats_columns:
+            stats_table.append([
+                f"{specie}-{ptype}",
+                col,
+                mean_vals[col],
+                (min_vals[col], max_vals[col]),
+                n,
+            ])
+
+        # Spacer row for readability
+        stats_table.append(["", "", "", "", ""])
 
     print(tabulate(stats_table, ["Group", "Parameter", "Mean", "Range", "N"], tablefmt="fancy_grid"))
 
 
 def uS(S, VKm):
+    """
+    Resource uptake term.
+
+    Notes
+    -----
+    VKm acts as an uptake efficiency/scaling parameter.
+    """
     return (S * VKm) / (1 + S)
 
+
 def dB_seg(B_TC, seg_rate, uSi_TC):
-    # Calculate segregational loss rate, only applicable for plasmid-bearing population
+    """
+    Segregational loss term for plasmid-bearing cells.
+
+    Notes
+    -----
+    If `seg_rate` is NaN (missing), it is treated as 0.
+    """
     if np.isnan(seg_rate):
-        seg_rate = 0
+        seg_rate = 0.0
     return seg_rate * uSi_TC * B_TC
 
 
 def dB_conj_single(B_WT, B_TC, conj_exponent):
-    if np.isnan(conj_exponent): # Below detectable limits
-        conj_rate = 0
-    else:
-        conj_rate = 10**conj_exponent
-    ret = conj_rate * B_WT * B_TC
-    return ret
+    """
+    Conjugation term for one recipient-donor pair.
+
+    Notes
+    -----
+    `conj_exponent` is interpreted as log10(rate). If NaN, rate is set to 0.
+    """
+    conj_rate = 0.0 if np.isnan(conj_exponent) else 10 ** conj_exponent
+    return conj_rate * B_WT * B_TC
+
 
 def dB_kill(A, Bs, kappa, A_max):
-    kill_rate = 1 / (kappa*A_max)
+    """
+    Antibiotic killing term.
+
+    Notes
+    -----
+    Uses a linear-in-A killing rate scaled as 1/(kappa * A_max).
+    """
+    kill_rate = 1 / (kappa * A_max)
     return kill_rate * A * Bs
-
-# This function implements a set of ordinary differential equations describing
-# the population dynamics of plasmid-bearing (TC) and plasmid-free (WT) cells
-# competing for a limiting resource and exposed to a bactericidal antibiotic.
-# State variables are Resource (S) and Antibiotic (A) concentrations,
-# and Densities of Plasmid-bearing (B_TC) and Plasmid-free (B_WT) bacteria.
 def fsinglestrain(t, y, params):
-    S = y[0]
-    A = y[1]
-    B_TC = y[2]
-    B_WT = y[3]
+    """
+    RHS for the single-strain ODE model with plasmid-bearing (TC) and plasmid-free (WT) subpopulations.
 
-    A_max=params.attrs['A_max']
+    State vector
+    ------------
+    y = [S, A, B_TC, B_WT]
+      S    : resource concentration
+      A    : antibiotic concentration
+      B_TC : plasmid-bearing density
+      B_WT : plasmid-free density
+    """
+    S, A, B_TC, B_WT = y
+    A_max = params.attrs["A_max"]
 
-    # For plasmid-bearing (TC)
-    uSi_TC = uS(S, params['VKm'][0])
+    # TC dynamics
+    uSi_TC = uS(S, params["VKm"][0])
     uStot_TC = uSi_TC * B_TC
 
-    dB_TC_growth = params['rho'][0] * uSi_TC * B_TC
-    dB_TC_seg = dB_seg(B_TC, params['seg_rate'][0], uSi_TC)
+    dB_TC_growth = params["rho"][0] * uSi_TC * B_TC
+    dB_TC_seg = dB_seg(B_TC, params["seg_rate"][0], uSi_TC)
 
-    # For plasmid-free (WT)
-    db_MIC_TC = params['kappa'][0]
+    db_MIC_TC = params["kappa"][0]
     dB_TC_kill = dB_kill(A, B_TC, db_MIC_TC, A_max)
-    dB_WT_seg= dB_seg(B_TC, params['seg_rate'][0], uSi_TC)
 
-    conj_permissiveness = params['conj_rate'][1] # permissiveness of WT
-    dB_TC_conj = dB_conj_single(B_WT, B_TC, conj_permissiveness)
-    #print("TC: ",dB_TC_growth, dB_TC_conj, dB_TC_seg, dB_TC_kill)
+    conj_perm = params["conj_rate"][1]  # WT permissiveness (log10 scale)
+    dB_TC_conj = dB_conj_single(B_WT, B_TC, conj_perm)
+
     dB_TC = dB_TC_growth + dB_TC_conj - dB_TC_seg - dB_TC_kill
 
-    # For plasmid-free (WT)
-    uSi_WT = uS(S, params['VKm'][1])
+    # WT dynamics
+    uSi_WT = uS(S, params["VKm"][1])
     uStot_WT = uSi_WT * B_WT
 
-    dB_WT_growth = params['rho'][1] * uSi_WT * B_WT
+    dB_WT_growth = params["rho"][1] * uSi_WT * B_WT
 
-    db_MIC_WT = params['kappa'][1]
+    db_MIC_WT = params["kappa"][1]
     dB_WT_kill = dB_kill(A, B_WT, db_MIC_WT, A_max)
 
-    dB_WT_seg= params['rho'][0] * uSi_TC * B_TC * params['seg_rate'][0]
+    dB_WT_seg = params["rho"][0] * uSi_TC * B_TC * params["seg_rate"][0]
+    dB_WT_conj = dB_conj_single(B_WT, B_TC, conj_perm)
 
-    conj_permissiveness = params['conj_rate'][1] # permissiveness of WT
-    dB_WT_conj = dB_conj_single(B_WT, B_TC, conj_permissiveness)
-    #print("WT: ",dB_WT_growth, dB_WT_conj, dB_WT_seg, dB_WT_kill)
-    
     dB_WT = dB_WT_growth - dB_WT_conj - dB_WT_kill + dB_WT_seg
 
-    dS =  - (uStot_TC + uStot_WT)
-    dA = -A * (params.attrs['alphas'][0] * B_TC + params.attrs['alphas'][1] * B_WT)
+    dS = -(uStot_TC + uStot_WT)
+    dA = -A * (params.attrs["alphas"][0] * B_TC + params.attrs["alphas"][1] * B_WT)
 
     return np.array([dS, dA, dB_TC, dB_WT])
 
-#The function simulate_model(model_params, y0) runs the simulation of our model
-#by solving the system of ordinary differential equations (ODEs).
-#It uses the solve_ivp method from the SciPy library with backward differentiation,
-#returning the time points and corresponding solution vectors.
+
 def simulate_model(model_params, y0):
+    """
+    Integrate the single-strain ODE system over one experiment duration.
 
-    t_span = [0, model_params.attrs['T']]
+    Parameters
+    ----------
+    model_params : object
+        Parameter table with `attrs['T']` defining the end time.
+    y0 : array-like
+        Initial state [S, A, B_TC, B_WT].
 
-    # Solve the ODE
-    sol = solve_ivp(fsinglestrain, t_span, y0, args=(model_params,), method='BDF', max_step=0.1, rtol=1e-5, atol=1e-8)
+    Returns
+    -------
+    times : ndarray
+        Integration time points.
+    ys : ndarray
+        State trajectories with shape (n_states, n_times).
+    """
+    t_span = [0, model_params.attrs["T"]]
 
-    # Extract the time points and solution vectors
-    times = sol.t
-    ys = sol.y
+    sol = solve_ivp(
+        fsinglestrain,
+        t_span,
+        y0,
+        args=(model_params,),
+        method="BDF",
+        max_step=0.1,
+        rtol=1e-5,
+        atol=1e-8,
+    )
 
-    return times, ys
+    return sol.t, sol.y
 
-#The plot_simulation(t, ys) function generates three plots to visualize
-#the simulation results: the first plot shows the resource and antibiotic
-#concentrations over time; the second plot depicts the density of the
-#plasmid-bearing and plasmid-free strains over time; the third plot
-#illustrates the relative abundance of each strain over time.
+
 def plot_simulation(t, ys):
-    fig, axs = plt.subplots(1, 3, figsize=(12,3))
+    """
+    Plot resource/antibiotic, absolute densities, and relative abundances over time.
+    """
+    fig, axs = plt.subplots(1, 3, figsize=(12, 3))
 
-    S = ys[0]
-    A = ys[1]
-    B_TC = ys[2]
-    B_WT = ys[3]
-    B_total=B_TC+B_WT
+    S, A, B_TC, B_WT = ys[0], ys[1], ys[2], ys[3]
+    B_total = B_TC + B_WT
 
-    axs[1].plot(t, B_TC,'-', label='TC', color='k')
+    # Resource and antibiotic
+    axs[0].plot(t, S, label="Resource")
+    axs[0].plot(t, A, label="Antibiotic (units of MIC)")
+    axs[0].set_xlabel("Time (hours)", fontsize=12)
+    axs[0].set_ylabel("Concentration", fontsize=12)
+    axs[0].set_ylim([-0.05, 1.1])
+    axs[0].legend()
 
-    axs[1].plot(t, B_WT, ':', label='WT', color='k')
+    # Absolute densities
+    axs[1].plot(t, B_TC, "-", label="TC", color="k")
+    axs[1].plot(t, B_WT, ":", label="WT", color="k")
+    axs[1].set_xlabel("Time (hours)", fontsize=12)
+    axs[1].set_ylabel("Density (cells/ml)", fontsize=12)
 
-    # Plot bacterial density
-    axs[0].plot(t, S, label='Resource')
-    axs[0].plot(t, A, label='Antibiotic (units of MIC)')
-
-    axs[0].set_xlabel('Time (hours)', fontsize=12)
-    axs[0].set_ylabel('Concentration', fontsize=12)
-    axs[0].set_ylim([-0.05,1.1])
-
-    axs[1].set_xlabel('Time (hours)', fontsize=12)
-    axs[1].set_ylabel('Density (cells/ml)', fontsize=12)
-
-    # Calculate relative abundance of each strain
+    # Relative abundance
     rel_B_TC = B_TC / B_total
     rel_B_WT = B_WT / B_total
 
-    # Plot relative abundance
-    axs[2].plot(t, rel_B_TC, '-', label='TC', color='k')
-    axs[2].plot(t, rel_B_WT, ':', label='WT', color='k')
-
-    axs[2].set_xlabel('Time (hours)', fontsize=12)
-    axs[2].set_ylabel('Relative Abundance', fontsize=12)
-
-    axs[0].legend()
+    axs[2].plot(t, rel_B_TC, "-", label="TC", color="k")
+    axs[2].plot(t, rel_B_WT, ":", label="WT", color="k")
+    axs[2].set_xlabel("Time (hours)", fontsize=12)
+    axs[2].set_ylabel("Relative Abundance", fontsize=12)
     axs[2].legend()
+
+    return fig, axs
 
 def get_selected_strains_params(model_params, istrains):
     num_strains = int(len(model_params) / 2)
