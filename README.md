@@ -1,6 +1,6 @@
 Repository for: <br><br>
 **Temporal correlations in selection pressure determine plasmid stability in stochastic environments**<br>
-_Carles Tardio Pi, Adrian Gonz\'alez Casanova, Alvaro San Millan and Rafael Peña-Miller_.
+_C. Tardio Pi, A. Gonz\'alez Casanova, A. San Millan and R. Peña-Miller_.
 
 ---
 
