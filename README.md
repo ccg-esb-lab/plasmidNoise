@@ -1,4 +1,6 @@
-# plasmidNoise
+Repository for: <br><br>
+**Temporal correlations in selection pressure determine plasmid stability in stochastic environments**<br>
+_Carles Tardío Pi, Adri\'an Gonz\'alez Casanova, \'Alvaro San Mill\'and Rafael Peña-Miller_._.
 
 This repository contains Jupyter notebooks implementing and analyzing models of plasmid dynamics in bacterial communities under antibiotic exposure.
 
@@ -6,7 +8,7 @@ The notebooks focus on multistrain population dynamics, conjugation, segregation
 
 ---
 
-## Notebooks
+## Jupytern Notebooks
 
 ### `plasmidNoise_multistrain_model.ipynb`
 Defines the multistrain plasmid model and its core components.
