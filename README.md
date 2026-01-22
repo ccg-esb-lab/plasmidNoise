@@ -1,12 +1,22 @@
 Repository for: <br><br>
 **Temporal correlations in selection pressure determine plasmid stability in stochastic environments**<br>
-_Carles Tardío Pi, Adri\'an Gonz\'alez Casanova, \'Alvaro San Mill\'and Rafael Peña-Miller_._.
-
-This repository contains Jupyter notebooks implementing and analyzing models of plasmid dynamics in bacterial communities under antibiotic exposure.
-
-The notebooks focus on multistrain population dynamics, conjugation, segregation, and community-level outcomes such as plasmid frequency and diversity.
+_Carles Tardío Pi, Adri\'an Gonz\'alez Casanova, \'Alvaro San Mill\'and Rafael Peña-Miller_.
 
 ---
+
+## Model background
+
+The population dynamics model implemented in this repository, as well as the parameterization to clinical isolates, are based on the framework presented in:
+
+> **Antimicrobial resistance level and conjugation permissiveness shape plasmid distribution in clinical enterobacteria**  
+> A. Alonso-del Valle, L. Toribio-Celestino, A. Quirant, C. Tardío Pi, J. DelaFuente, R. Cantón, E. Rocha, C. Úbeda, R. Peña-Miller, and A. San Millán.  
+> *Proceedings of the National Academy of Sciences* **120**(51), 2023.
+
+The scripts and data used to generate the theoretical figures in that work are available at:
+
+https://github.com/ccg-esb/EvK
+
+The present repository extends and adapts this modeling framework to explore multistrain community dynamics and temporally varying antibiotic environments.
 
 ## Jupytern Notebooks
 
