@@ -10,7 +10,7 @@ The notebooks focus on multistrain population dynamics, conjugation, segregation
 
 ## Jupytern Notebooks
 
-### `plasmidNoise_multistrain_model.ipynb`
+### [plasmidNoise_multistrain_model.ipynb](plasmidNoise_multistrain_model.ipynb)
 Defines the multistrain plasmid model and its core components.
 
 This notebook:
@@ -20,7 +20,7 @@ This notebook:
 
 ---
 
-### `plasmidNoise_communities_simulation.ipynb`
+### [plasmidNoise_communities_simulation.ipynb](plasmidNoise_communities_simulation.ipynb)
 Runs community-level simulations under different antibiotic environments.
 
 This notebook:
@@ -30,11 +30,11 @@ This notebook:
 
 ---
 
-### `plasmidNoise_communities_analysis.ipynb`
+### [plasmidNoise_communities_analysis.ipynb](plasmidNoise_communities_analysis.ipynb)
 Analyzes simulation outputs.
 
 This notebook:
-- extracts final densities and plasmid frequencies,
+- extracts final densities and plasmid frequencies from stored data,
 - computes summary statistics (means, AUCs, diversity indices),
 - generates figures and aggregate metrics from the simulation results.
 
