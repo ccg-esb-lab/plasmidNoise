@@ -1,60 +1,41 @@
 Repository for: <br><br>
 **Temporal correlations in selection pressure determine plasmid stability in stochastic environments**<br>
-_C. Tardio Pi, A. Gonz\'alez Casanova, A. San Millan and R. Peña-Miller_.
+*C. Tardio Pi, A. González Casanova, A. San Millán and R. Peña-Miller*.
 
 ---
 
-## Model background
+## Model overview
 
-The population dynamics model implemented in this repository, as well as the parameterization to clinical isolates, are based on the framework presented in:
-
-> **Antimicrobial resistance level and conjugation permissiveness shape plasmid distribution in clinical enterobacteria**  
-> A. Alonso-del Valle, L. Toribio-Celestino, A. Quirant, C. Tardío Pi, J. DelaFuente, R. Cantón, E. Rocha, C. Úbeda, R. Peña-Miller, and A. San Millán.  
-> *Proceedings of the National Academy of Sciences* **120**(51), 2023.
-
-The scripts and data used to generate the theoretical figures in that work are available at:
-
-https://github.com/ccg-esb/EvK
-
-The present repository extends and adapts this modeling framework to explore multistrain community dynamics and temporally varying antibiotic environments.
-
-## Jupytern Notebooks
-
-### [plasmidNoise_multistrain_model.ipynb](plasmidNoise_multistrain_model.ipynb)
-Defines the multistrain plasmid model and its core components.
-
-This notebook:
-- implements the ODE model for plasmid-bearing (TC) and plasmid-free (WT) subpopulations,
-- defines growth, killing, conjugation, and segregation terms,
-- provides helper functions used by downstream simulations.
+This repository implements a population-dynamics model for plasmid maintenance in bacterial populations exposed to temporally variable antibiotic selection. Each strain is represented by two subpopulations: plasmid-bearing cells, (B_p), and plasmid-free cells, (B_\emptyset). Plasmid-bearing cells can have reduced antibiotic-induced killing, but may pay a growth cost. Plasmid-free cells can arise through segregational loss, and plasmids can spread back into plasmid-free cells through conjugation. The model is simulated as a serial-transfer experiment, where bacterial densities are propagated through repeated growth-dilution cycles under defined antibiotic environments. These environments can be constant, periodic, or stochastic, allowing the simulations to test how the temporal structure of selection affects plasmid fraction, population density, persistence, and extinction.
 
 ---
 
-### [plasmidNoise_communities_simulation.ipynb](plasmidNoise_communities_simulation.ipynb)
-Runs community-level simulations under different antibiotic environments.
+## Jupyter notebooks
 
-This notebook:
-- loads predefined environmental time series,
-- runs multistrain simulations across environments and antibiotic amplitudes,
-- stores time-resolved population dynamics and frequencies.
+### [plasmidNoise_constant.ipynb](plasmidNoise_constant.ipynb)
+
+This notebook introduces the core serial-transfer simulations and analyzes plasmid-bearing and plasmid-free population dynamics under constant antibiotic concentrations. It includes single-strain dose-response simulations and community-size simulations used to quantify how antibiotic selection affects final density and plasmid fraction.
 
 ---
 
-### [plasmidNoise_communities_analysis.ipynb](plasmidNoise_communities_analysis.ipynb)
-Analyzes simulation outputs.
+### [plasmidNoise_periodic.ipynb](plasmidNoise_periodic.ipynb)
 
-This notebook:
-- extracts final densities and plasmid frequencies from stored data,
-- computes summary statistics (means, AUCs, diversity indices),
-- generates figures and aggregate metrics from the simulation results.
+This notebook studies deterministic temporal variation in antibiotic exposure. It generates periodic treatment schedules and compares single-strain and multistrain community responses across different fluctuation periods, focusing on plasmid dynamics, extinction, persistence, and final population structure.
+
+---
+
+### [plasmidNoise_stochastic.ipynb](plasmidNoise_stochastic.ipynb)
+
+This notebook analyzes stochastic antibiotic environments with different temporal correlation structures. It simulates single strains and multistrain communities across stochastic replicates and summarizes survival, persistence time, final density, plasmid fraction, and the temporal relationship between antibiotic fluctuations and plasmid dynamics.
+
+---
 
 ## Authors
 
 [@Systems Biology Lab, CCG-UNAM](https://github.com/ccg-esb-lab)
 
+---
 
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)
-
-This project is licensed under the MIT License - see the [license.txt](../license.txt) file for details. Hardware is lincesed under the CERN license.
